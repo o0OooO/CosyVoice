@@ -19,7 +19,7 @@ modelscope==1.20.0
 networkx==3.1
 omegaconf==2.3.0
 onnx==1.16.0
-onnxruntime-gpu==1.18.0; sys_platform == 'linux'
+onnxruntime-gpu==1.23.0; sys_platform == 'linux'
 onnxruntime==1.18.0; sys_platform == 'darwin' or sys_platform == 'win32'
 openai-whisper==20231117
 protobuf==4.25
@@ -38,3 +38,5 @@ transformers==4.51.3
 uvicorn==0.30.0
 wetext==0.0.4
 wget==3.2
+inflect
+wetext
