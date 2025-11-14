@@ -311,6 +311,15 @@ You can also scan the QR code to join our official Dingding chat group.
 The content provided above is for academic purposes only and is intended to demonstrate technical capabilities. Some examples are sourced from the internet. If any content infringes on your rights, please contact us to request its removal.
 
 
+先按照上面的下载模型：
+from modelscope import snapshot_download
+snapshot_download('iic/CosyVoice2-0.5B', local_dir='pretrained_models/CosyVoice2-0.5B')
+snapshot_download('iic/CosyVoice-300M', local_dir='pretrained_models/CosyVoice-300M')
+snapshot_download('iic/CosyVoice-300M-SFT', local_dir='pretrained_models/CosyVoice-300M-SFT')
+snapshot_download('iic/CosyVoice-300M-Instruct', local_dir='pretrained_models/CosyVoice-300M-Instruct')
+snapshot_download('iic/CosyVoice-ttsfrd', local_dir='pretrained_models/CosyVoice-ttsfrd')
+否则启动运行时会报错
+
 
 避免CosyVoice模型选择失败 需要做如下处理：
 预下载 CosyVoice2 模型到本地（推荐）：
