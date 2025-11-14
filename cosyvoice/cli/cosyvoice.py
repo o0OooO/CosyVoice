@@ -28,10 +28,10 @@ class CosyVoice:
 
     def __init__(self, model_dir, load_jit=False, load_trt=False, fp16=False, trt_concurrent=1):
         self.instruct = True if '-Instruct' in model_dir else False
-        self.model_dir = model_dir
         self.fp16 = fp16
         if not os.path.exists(model_dir):
             model_dir = snapshot_download(model_dir)
+        self.model_dir = model_dir
         hyper_yaml_path = '{}/cosyvoice.yaml'.format(model_dir)
         if not os.path.exists(hyper_yaml_path):
             raise ValueError('{} not found!'.format(hyper_yaml_path))
@@ -143,10 +143,10 @@ class CosyVoice2(CosyVoice):
 
     def __init__(self, model_dir, load_jit=False, load_trt=False, load_vllm=False, fp16=False, trt_concurrent=1):
         self.instruct = True if '-Instruct' in model_dir else False
-        self.model_dir = model_dir
         self.fp16 = fp16
         if not os.path.exists(model_dir):
             model_dir = snapshot_download(model_dir)
+        self.model_dir = model_dir
         hyper_yaml_path = '{}/cosyvoice2.yaml'.format(model_dir)
         if not os.path.exists(hyper_yaml_path):
             raise ValueError('{} not found!'.format(hyper_yaml_path))

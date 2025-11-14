@@ -311,14 +311,12 @@ You can also scan the QR code to join our official Dingding chat group.
 The content provided above is for academic purposes only and is intended to demonstrate technical capabilities. Some examples are sourced from the internet. If any content infringes on your rights, please contact us to request its removal.
 
 
-先按照上面的下载模型：
-from modelscope import snapshot_download
-snapshot_download('iic/CosyVoice2-0.5B', local_dir='pretrained_models/CosyVoice2-0.5B')
-snapshot_download('iic/CosyVoice-300M', local_dir='pretrained_models/CosyVoice-300M')
-snapshot_download('iic/CosyVoice-300M-SFT', local_dir='pretrained_models/CosyVoice-300M-SFT')
-snapshot_download('iic/CosyVoice-300M-Instruct', local_dir='pretrained_models/CosyVoice-300M-Instruct')
-snapshot_download('iic/CosyVoice-ttsfrd', local_dir='pretrained_models/CosyVoice-ttsfrd')
-否则启动运行时会报错
+
+环境有要求 要求python3.11或3.10 3.13会报错，不兼容，启动后运行失败！
+
+conda create -n cosyvoice_py310 python=3.10
+conda activate cosyvoice_py310
+pip install -r requirements.txt
 
 
 避免CosyVoice模型选择失败 需要做如下处理：
