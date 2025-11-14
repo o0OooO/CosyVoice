@@ -61,8 +61,14 @@ def get_cosyvoice():
             logger.info('Loaded CosyVoice2 model')
         except (ValueError, FileNotFoundError) as e:
             logger.info('CosyVoice2 not available (%s), trying CosyVoice', str(e))
-            _cv = CosyVoice(MODEL_DIR)
-            logger.info('Loaded CosyVoice model')
+            try:
+                _cv = CosyVoice(MODEL_DIR)
+                logger.info('Loaded CosyVoice model')
+            except ModuleNotFoundError as me:
+                if 'matcha' in str(me).lower():
+                    logger.error('Matcha-TTS module not found. Please run: git submodule init && git submodule update')
+                    raise RuntimeError('Matcha-TTS submodule not initialized. Run: git submodule init && git submodule update') from me
+                raise
     return _cv
 
 
