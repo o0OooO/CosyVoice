@@ -281,16 +281,18 @@ async def voice_tts_by_name(name: str = Form(),
         return JSONResponse(status_code=404, content={'message': f'spk_id {name} not found, please register first'})
 
     frames: List[torch.Tensor] = []
-    if isinstance(cv, CosyVoice2):
-        # CosyVoice2: 使用 instruct2
-        dummy_prompt = torch.zeros(1, 16000)
-        for out in cv.inference_instruct2(tts_text, instruct_text, dummy_prompt, zero_shot_spk_id=name, stream=False):
-            frames.append(out['tts_speech'])
+    # 使用已注册的说话人ID进行推理
+    # 如果提供了instruct_text且模型支持，使用instruct推理；否则使用SFT推理
+    if instruct_text and hasattr(cv, 'instruct') and cv.instruct:
+        try:
+            for out in cv.inference_instruct(tts_text, name, instruct_text, stream=False):
+                frames.append(out['tts_speech'])
+        except (ValueError, AttributeError):
+            # 如果instruct不支持，回退到SFT
+            for out in cv.inference_sft(tts_text, name, stream=False):
+                frames.append(out['tts_speech'])
     else:
-        # CosyVoice: 使用 zero_shot（从 spk2info 获取提示音信息）
-        # 注意：CosyVoice 的 zero_shot 需要 prompt_text，但已注册的 spk 可能没有保存，使用空字符串
-        dummy_prompt = torch.zeros(1, 16000)
-        for out in cv.inference_zero_shot(tts_text, '', dummy_prompt, zero_shot_spk_id=name, stream=False):
+        for out in cv.inference_sft(tts_text, name, stream=False):
             frames.append(out['tts_speech'])
     
     merged = _merge_torch_audio_frames(frames)
@@ -343,7 +345,6 @@ async def voice_tts_by_name_structured(name: str = Form(),
         return JSONResponse(status_code=400, content={'message': 'invalid segments json'})
 
     sr = cv.sample_rate
-    dummy_prompt = torch.zeros(1, 16000)
     frames: List[torch.Tensor] = []
     # 精确字幕：逐段统计音频长度
     subs: List[Dict] = []
@@ -355,14 +356,11 @@ async def voice_tts_by_name_structured(name: str = Form(),
         seg_frames: List[torch.Tensor] = []
         
         if text.strip():
-            if isinstance(cv, CosyVoice2):
-                # CosyVoice2: 使用 instruct2
-                for out in cv.inference_instruct2(text, instr, dummy_prompt, zero_shot_spk_id=name, stream=False):
-                    seg_frames.append(out['tts_speech'])
-            else:
-                # CosyVoice: 使用 zero_shot（忽略 instruct）
-                for out in cv.inference_zero_shot(text, '', dummy_prompt, zero_shot_spk_id=name, stream=False):
-                    seg_frames.append(out['tts_speech'])
+            # 使用已注册的说话人ID进行SFT推理
+            # 注意：当前实现中instruct_text会被忽略，因为SFT不支持instruct
+            # 如果需要instruct功能，需要使用instruct模型或其他方法
+            for out in cv.inference_sft(text, name, stream=False):
+                seg_frames.append(out['tts_speech'])
             
             if seg_frames:
                 seg_tensor = _merge_torch_audio_frames(seg_frames)
