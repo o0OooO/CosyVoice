@@ -12,6 +12,27 @@ def save_b64_wav(b64_str: str, out_path: str) -> None:
         f.write(audio_bytes)
 
 
+def save_subtitles(response_json: dict, base_path: str) -> None:
+    """保存字幕文件（SRT和VTT格式）"""
+    if 'subtitles_srt' in response_json:
+        srt_path = base_path.rsplit('.', 1)[0] + '.srt'
+        with open(srt_path, 'w', encoding='utf-8') as f:
+            f.write(response_json['subtitles_srt'])
+        print(f"  └─ Subtitles (SRT) saved -> {srt_path}")
+    
+    if 'subtitles_vtt' in response_json:
+        vtt_path = base_path.rsplit('.', 1)[0] + '.vtt'
+        with open(vtt_path, 'w', encoding='utf-8') as f:
+            f.write(response_json['subtitles_vtt'])
+        print(f"  └─ Subtitles (VTT) saved -> {vtt_path}")
+    
+    if 'subtitles' in response_json:
+        json_path = base_path.rsplit('.', 1)[0] + '_subtitles.json'
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(response_json['subtitles'], f, ensure_ascii=False, indent=2)
+        print(f"  └─ Subtitles (JSON) saved -> {json_path}")
+
+
 def main():
     host = args.host
     port = args.port
@@ -35,6 +56,7 @@ def main():
     spk_id = j.get('spk_id', args.name)
     save_b64_wav(j['audio_wav_base64'], args.out_preview)
     print(f"[create_and_preview] spk_id={spk_id}, preview saved -> {args.out_preview}, sample_rate={j.get('sample_rate')}")
+    save_subtitles(j, args.out_preview)
 
     # 2) 使用名称合成正式文本（不再上传提示音）
     tts_url = f"{base_url}/voice/tts_by_name"
@@ -48,6 +70,7 @@ def main():
     j = resp.json()
     save_b64_wav(j['audio_wav_base64'], args.out_tts)
     print(f"[tts_by_name] saved -> {args.out_tts}, sample_rate={j.get('sample_rate')}")
+    save_subtitles(j, args.out_tts)
 
     # 3) 可选：列出当前已注册名称
     try:
