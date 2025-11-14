@@ -54,7 +54,7 @@ _cv2 = None
 
 
 def get_cosyvoice():
-    """获取 CosyVoice 实例（用于零样本克隆）"""
+    """获取 CosyVoice 实例（降级方案）"""
     global _cv
     if _cv is None:
         logger.info('Initializing CosyVoice with model_dir=%s', MODEL_DIR)
@@ -73,7 +73,7 @@ def get_cosyvoice():
 
 
 def get_cosyvoice2():
-    """获取 CosyVoice2 实例（用于声音描述模式）"""
+    """获取 CosyVoice2 实例（优先使用）"""
     global _cv2
     if _cv2 is None:
         logger.info('Initializing CosyVoice2 with model_dir=%s', MODEL_DIR_V2)
@@ -89,18 +89,15 @@ def get_cosyvoice2():
     return _cv2
 
 
-def get_model_for_mode(mode: str):
+def get_primary_model():
     """
-    根据模式选择合适的模型
-    mode: 'zero_shot' 或 'instruct'
+    获取主模型：优先使用 CosyVoice2，不可用时降级到 CosyVoice
     """
-    if mode == 'instruct':
-        cv2 = get_cosyvoice2()
-        if cv2 is None:
-            raise ValueError('CosyVoice2 model is required for instruct mode but not available')
+    cv2 = get_cosyvoice2()
+    if cv2 is not None:
         return cv2
-    else:
-        return get_cosyvoice()
+    logger.info('CosyVoice2 not available, falling back to CosyVoice')
+    return get_cosyvoice()
 
 
 
@@ -206,7 +203,7 @@ async def register_spk(prompt_wav: UploadFile = File(),
     通过零样本提示音注册新说话人，返回 spk_id 并持久化到 spk2info.pt。
     注意：现有后端服务会在启动时加载 spk2info，新增说话人后需重启后端服务方可通过 /inference_sft 使用新 spk_id。
     """
-    cv = get_cosyvoice()
+    cv = get_primary_model()
     prompt_speech_16k = load_wav(prompt_wav.file, 16000)
     if not spk_id:
         spk_id = _gen_spk_id('spk')
@@ -216,24 +213,28 @@ async def register_spk(prompt_wav: UploadFile = File(),
     cv.save_spkinfo()
     return {
         'spk_id': spk_id,
+        'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice',
         'message': 'success, please restart backend cosyvoice server to take effect for /inference_sft'
     }
 
 
 @app.get('/list_spk')
 async def list_spk():
-    cv = get_cosyvoice()
+    cv = get_primary_model()
     try:
         spks = cv.list_available_spks()
     except Exception:
         # CosyVoice2 复用 spk2info 结构
         spks = list(getattr(cv.frontend, 'spk2info', {}).keys())
-    return {'spk_ids': spks}
+    return {
+        'spk_ids': spks,
+        'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice'
+    }
 
 
 @app.post('/delete_spk')
 async def delete_spk(spk_id: str = Form()):
-    cv = get_cosyvoice()
+    cv = get_primary_model()
     spk2info = getattr(cv.frontend, 'spk2info', {})
     if spk_id not in spk2info:
         return JSONResponse(status_code=404, content={'message': 'spk_id not found'})
@@ -286,8 +287,8 @@ async def voice_create_and_preview(name: str = Form(),
                 'message': 'prompt_text is required when using zero-shot cloning mode. Please provide the text content of the prompt audio.'
             })
         
-        # 使用 CosyVoice 模型进行零样本克隆
-        cv = get_cosyvoice()
+        # 使用主模型进行零样本克隆（优先 CosyVoice2）
+        cv = get_primary_model()
         
         # 1) 注册/覆盖该名称的说话人（使用零样本提示音）
         prompt_speech_16k = load_wav(prompt_wav.file, 16000)
@@ -300,8 +301,14 @@ async def voice_create_and_preview(name: str = Form(),
         
         # 2) 朗读预览文本
         frames: List[torch.Tensor] = []
-        for out in cv.inference_zero_shot(preview_text, prompt_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
-            frames.append(out['tts_speech'])
+        if isinstance(cv, CosyVoice2):
+            # CosyVoice2: 使用 instruct2（支持 instruct_text）
+            for out in cv.inference_instruct2(preview_text, instruct_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
+                frames.append(out['tts_speech'])
+        else:
+            # CosyVoice: 使用 zero_shot
+            for out in cv.inference_zero_shot(preview_text, prompt_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
+                frames.append(out['tts_speech'])
         
         merged = _merge_torch_audio_frames(frames)
         pcm = _float_to_pcm16le_bytes(merged)
@@ -316,30 +323,44 @@ async def voice_create_and_preview(name: str = Form(),
             'spk_id': name,
             'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
             'sample_rate': cv.sample_rate,
-            'model_type': 'CosyVoice',
+            'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice',
             'subtitles': subs,
             'subtitles_srt': subs_srt,
             'subtitles_vtt': subs_vtt
         }
     
-    # 模式2：声音描述生成（使用 CosyVoice2）
+    # 模式2：声音描述生成（使用 SFT 模式 + 已有说话人）
     elif has_instruct_text:
-        try:
-            cv2 = get_model_for_mode('instruct')
-        except ValueError as e:
+        cv = get_primary_model()
+        
+        # instruct_text 作为提示，实际使用 SFT 模式
+        # 如果没有指定 spk_id，使用第一个可用的说话人
+        if not spk_id:
+            try:
+                available_spks = cv.list_available_spks()
+                if available_spks:
+                    spk_id = available_spks[0]
+                    logger.info(f'Using default spk_id: {spk_id}')
+            except Exception:
+                spk2info = getattr(cv.frontend, 'spk2info', {})
+                if spk2info:
+                    spk_id = list(spk2info.keys())[0]
+                    logger.info(f'Using default spk_id from spk2info: {spk_id}')
+        
+        if not spk_id:
             return JSONResponse(status_code=400, content={
-                'message': str(e) + ' Please check MODEL_DIR_V2 environment variable or use zero-shot cloning mode instead.'
+                'message': 'No speaker available. Please provide spk_id or use zero-shot cloning mode with prompt_wav + prompt_text.'
             })
         
-        # 用 instruct 生成音频
+        # 使用 SFT 模式生成音频
         frames: List[torch.Tensor] = []
         try:
-            for out in cv2.inference_instruct(preview_text, spk_id, instruct_text, stream=False):
+            for out in cv.inference_sft(preview_text, spk_id, stream=False):
                 frames.append(out['tts_speech'])
         except Exception as e:
-            logger.error(f'inference_instruct failed: {e}')
+            logger.error(f'inference_sft failed: {e}')
             return JSONResponse(status_code=500, content={
-                'message': f'Failed to generate audio: {str(e)}'
+                'message': f'Failed to generate audio with spk_id {spk_id}: {str(e)}'
             })
         
         merged = _merge_torch_audio_frames(frames)
@@ -348,7 +369,6 @@ async def voice_create_and_preview(name: str = Form(),
         registered_spk_id = None
         if not name:
             name = _gen_spk_id('voice')
-        cv = get_cosyvoice()
         # 将生成的音频重采样到 16kHz 并注册
         if cv2.sample_rate != 16000:
             import torchaudio
@@ -357,10 +377,10 @@ async def voice_create_and_preview(name: str = Form(),
         else:
             prompt_speech_16k = merged
 
-        # 使用预览文本作为提示文本注册说话人到 CosyVoice
-        ok = cv.add_zero_shot_spk(preview_text, prompt_speech_16k, name)
+        # 使用预览文本作为提示文本注册说话人
+        ok = cv2.add_zero_shot_spk(preview_text, prompt_speech_16k, name)
         if ok is True:
-            cv.save_spkinfo()
+            cv2.save_spkinfo()
             registered_spk_id = name
             logger.info(f'Registered instruct-generated voice as spk_id: {name}')
         else:
@@ -380,7 +400,7 @@ async def voice_create_and_preview(name: str = Form(),
             'model_type': 'CosyVoice2',
             'instruct_text': instruct_text,
             'subtitles': subs,
-            'spk_id': name,
+            'spk_id': registered_spk_id,
             'subtitles_srt': subs_srt,
             'subtitles_vtt': subs_vtt,
             'message': f'Voice registered as {registered_spk_id}, can be reused with /voice/tts_by_name'
@@ -401,9 +421,9 @@ async def voice_tts_by_name(name: str = Form(),
                             instruct_text: str = Form(default='')):
     """
     使用已注册名称的音色朗读文本。
-    CosyVoice2 使用 instruct2；CosyVoice 使用 zero_shot（忽略 instruct_text）。
+    优先使用 CosyVoice2，支持 instruct_text；降级到 CosyVoice 时忽略 instruct_text。
     """
-    cv = get_cosyvoice()
+    cv = get_primary_model()
     
     # 检查说话人是否存在
     if name not in cv.frontend.spk2info:
@@ -451,9 +471,9 @@ async def voice_tts_by_name_structured(name: str = Form(),
       }
     未提供 instruct_text 的片段将回落到 default_instruct_text。
     将在片段间插入指定时长静音（pause_ms, 毫秒）。
-    CosyVoice2 支持 instruct；CosyVoice 忽略 instruct_text。
+    优先使用 CosyVoice2（支持 instruct）；降级到 CosyVoice 时忽略 instruct_text。
     """
-    cv = get_cosyvoice()
+    cv = get_primary_model()
     
     # 检查说话人是否存在
     if name not in cv.frontend.spk2info:
@@ -515,14 +535,14 @@ async def voice_tts_by_name_structured(name: str = Form(),
     }
 
 
-# 4) 根据声音提示词生成音频（无需提示音频，使用 CosyVoice2）
+# 4) 根据声音提示词生成音频（无需提示音频，需要 CosyVoice2）
 @app.post('/voice/tts_by_instruct')
 async def voice_tts_by_instruct(instruct_text: str = Form(),
                                 tts_text: str = Form(),
                                 spk_id: str = Form(default='')):
     """
     根据声音提示词（如"用温柔的女声"、"用低沉的男声"、"用四川口音"等）生成音频。
-    自动使用 CosyVoice2 模型的 inference_instruct 方法。
+    需要 CosyVoice2 模型的 inference_instruct 方法。
     不需要上传提示音频，模型会根据描述自动生成对应音色。
     
     参数：
@@ -530,11 +550,10 @@ async def voice_tts_by_instruct(instruct_text: str = Form(),
     - tts_text: 要朗读的文本内容
     - spk_id: 可选，指定预训练说话人ID（如果为空则使用默认）
     """
-    try:
-        cv2 = get_model_for_mode('instruct')
-    except ValueError as e:
+    cv2 = get_cosyvoice2()
+    if cv2 is None:
         return JSONResponse(status_code=400, content={
-            'message': str(e) + ' Please check MODEL_DIR_V2 environment variable.'
+            'message': 'CosyVoice2 model is required for instruct mode but not available. Please check MODEL_DIR_V2 environment variable.'
         })
     
     if not instruct_text or not instruct_text.strip():
