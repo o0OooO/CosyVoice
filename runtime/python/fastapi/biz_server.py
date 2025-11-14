@@ -226,6 +226,12 @@ async def voice_create_and_preview(name: str = Form(),
     """
     cv = get_cosyvoice()
 
+    # 验证prompt_text不为空（零样本克隆需要提示文本）
+    if not prompt_text or not prompt_text.strip():
+        return JSONResponse(status_code=400, content={
+            'message': 'prompt_text is required for zero-shot voice cloning. Please provide the text content of the prompt audio.'
+        })
+
     # 1) 注册/覆盖该名称的说话人（使用零样本提示音）
     prompt_speech_16k = load_wav(prompt_wav.file, 16000)
     if not name:
@@ -282,18 +288,11 @@ async def voice_tts_by_name(name: str = Form(),
 
     frames: List[torch.Tensor] = []
     # 使用已注册的说话人ID进行推理
-    # 如果提供了instruct_text且模型支持，使用instruct推理；否则使用SFT推理
-    if instruct_text and hasattr(cv, 'instruct') and cv.instruct:
-        try:
-            for out in cv.inference_instruct(tts_text, name, instruct_text, stream=False):
-                frames.append(out['tts_speech'])
-        except (ValueError, AttributeError):
-            # 如果instruct不支持，回退到SFT
-            for out in cv.inference_sft(tts_text, name, stream=False):
-                frames.append(out['tts_speech'])
-    else:
-        for out in cv.inference_sft(tts_text, name, stream=False):
-            frames.append(out['tts_speech'])
+    # 通过add_zero_shot_spk注册的说话人使用零样本推理
+    # 使用空的prompt_speech因为说话人信息已经在spk2info中
+    dummy_prompt = torch.zeros(1, 16000)
+    for out in cv.inference_zero_shot(tts_text, '', dummy_prompt, zero_shot_spk_id=name, stream=False):
+        frames.append(out['tts_speech'])
     
     merged = _merge_torch_audio_frames(frames)
     pcm = _float_to_pcm16le_bytes(merged)
@@ -356,10 +355,11 @@ async def voice_tts_by_name_structured(name: str = Form(),
         seg_frames: List[torch.Tensor] = []
         
         if text.strip():
-            # 使用已注册的说话人ID进行SFT推理
-            # 注意：当前实现中instruct_text会被忽略，因为SFT不支持instruct
-            # 如果需要instruct功能，需要使用instruct模型或其他方法
-            for out in cv.inference_sft(text, name, stream=False):
+            # 使用已注册的说话人ID进行推理
+            # 通过add_zero_shot_spk注册的说话人使用零样本推理
+            # 使用空的prompt_speech因为说话人信息已经在spk2info中
+            dummy_prompt = torch.zeros(1, 16000)
+            for out in cv.inference_zero_shot(text, '', dummy_prompt, zero_shot_spk_id=name, stream=False):
                 seg_frames.append(out['tts_speech'])
             
             if seg_frames:
