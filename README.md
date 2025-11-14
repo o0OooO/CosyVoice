@@ -309,3 +309,25 @@ You can also scan the QR code to join our official Dingding chat group.
 
 ## Disclaimer
 The content provided above is for academic purposes only and is intended to demonstrate technical capabilities. Some examples are sourced from the internet. If any content infringes on your rights, please contact us to request its removal.
+
+
+
+避免CosyVoice模型选择失败 需要做如下处理：
+预下载 CosyVoice2 模型到本地（推荐）：
+BIZ_PORT=50010 COSYVOICE_MODEL_DIR=/root/projects/CosyVoice/pretrained_models/CosyVoice2-0.5B \
+bash /root/projects/CosyVoice/runtime/python/fastapi/run_biz_server.sh
+或者
+启动 biz_server（务必使用 CosyVoice2）
+使用本地预下载目录：
+BIZ_PORT=50010 COSYVOICE_MODEL_DIR=/root/projects/CosyVoice/pretrained_models/CosyVoice2-0.5B \
+bash /root/projects/CosyVoice/runtime/python/fastapi/run_biz_server.sh
+
+或使用远程 ID（自动下载）：
+BIZ_PORT=50010 COSYVOICE_MODEL_DIR=iic/CosyVoice2-0.5B \
+bash /root/projects/CosyVoice/runtime/python/fastapi/run_biz_server.sh
+
+注：biz_server 里的接口都是 CosyVoice2 的 instruct2 系列，务必用 CosyVoice2 模型；无需单独启动 server.py。
+
+
+
+
