@@ -132,29 +132,8 @@ def main():
     print("\n" + "=" * 60)
     print("示例3：直接使用声音提示词生成（tts_by_instruct）")
     print("=" * 60)
-    
-    # 4) 使用 tts_by_instruct 接口
-    if args.direct_instruct_text:
-        instruct_url = f"{base_url}/voice/tts_by_instruct"
-        data = {
-            'instruct_text': args.direct_instruct_desc,
-            'tts_text': args.direct_instruct_text,
-            'spk_id': args.direct_instruct_spk
-        }
-        resp = requests.post(instruct_url, data=data, timeout=300)
-        if resp.status_code == 200:
-            j = resp.json()
-            save_b64_wav(j['audio_wav_base64'], args.out_direct_instruct)
-            print(f"[tts_by_instruct] instruct_text='{j.get('instruct_text')}'")
-            print(f"  └─ Audio saved -> {args.out_direct_instruct}, sample_rate={j.get('sample_rate')}")
-            save_subtitles(j, args.out_direct_instruct)
-        else:
-            print(f"tts_by_instruct 失败: {resp.status_code}")
-            print(f"  └─ {resp.json().get('message', 'Unknown error')}")
-    else:
-        print("未提供 --direct_instruct_text 参数，跳过 tts_by_instruct 示例")
 
-    # 5) 可选：列出当前已注册名称
+    # 4) 可选：列出当前已注册名称
     print("\n" + "=" * 60)
     try:
         list_url = f"{base_url}/list_spk"
@@ -191,12 +170,7 @@ if __name__ == '__main__':
     parser.add_argument('--out_instruct', type=str, default='instruct_mode.wav', help='声音描述模式输出路径')
     parser.add_argument('--instruct_reuse_text', type=str, default='这是用同一个音色生成的新内容。', help='复用声音描述模式创建的音色生成的文本')
     parser.add_argument('--out_instruct_reuse', type=str, default='instruct_reuse.wav', help='复用音色输出路径')
-    
-    # 示例3：直接使用 tts_by_instruct
-    parser.add_argument('--direct_instruct_text', type=str, default='欢迎使用语音合成系统，祝您使用愉快。', help='tts_by_instruct 要朗读的文本')
-    parser.add_argument('--direct_instruct_desc', type=str, default='用低沉的男声', help='tts_by_instruct 的声音描述')
-    parser.add_argument('--direct_instruct_spk', type=str, default='', help='tts_by_instruct 使用的预训练说话人ID（可选）')
-    parser.add_argument('--out_direct_instruct', type=str, default='direct_instruct.wav', help='tts_by_instruct 输出路径')
+
     
     args = parser.parse_args()
     main()
