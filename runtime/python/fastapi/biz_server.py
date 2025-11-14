@@ -213,62 +213,153 @@ async def delete_spk(spk_id: str = Form()):
 
 
 # 1) 创建命名音色 + 朗读预览文本（基于 CosyVoice2 instruct2 或 CosyVoice zero_shot）
+# preview_text - required
+# 用于预览朗读的文本内容
+# 注册完音色后，会用这个文本生成一段预览音频，让你听听效果
+# 返回的音频就是朗读这段文本的结果
+
 @app.post('/voice/create_and_preview')
 async def voice_create_and_preview(name: str = Form(),
                                   preview_text: str = Form(),
-                                  prompt_wav: UploadFile = File(),
+                                  prompt_wav: UploadFile = File(None),
                                   prompt_text: str = Form(default=''),
                                   instruct_text: str = Form(default='')):
     """
-    使用零样本提示音注册名称为 name 的音色，并朗读预览文本。
-    CosyVoice2 模型使用 instruct2；CosyVoice 模型使用 zero_shot。
-    返回注册的 spk_id 与预览音频 Base64 WAV。
+    创建音色并朗读预览文本。支持两种模式：
+    
+    模式1：零样本克隆（需要 prompt_wav + prompt_text）
+    - 上传音频文件和对应文本，克隆该音色
+    
+    模式2：声音描述生成（需要 instruct_text，仅 CosyVoice2）
+    - 不上传音频，用文字描述想要的声音特征（如"用温柔的女声"）
+    
+    返回注册的 spk_id（如果适用）与预览音频 Base64 WAV。
     """
     cv = get_cosyvoice()
-
-    # 验证prompt_text不为空（零样本克隆需要提示文本）
-    if not prompt_text or not prompt_text.strip():
-        return JSONResponse(status_code=400, content={
-            'message': 'prompt_text is required for zero-shot voice cloning. Please provide the text content of the prompt audio.'
-        })
-
-    # 1) 注册/覆盖该名称的说话人（使用零样本提示音）
-    prompt_speech_16k = load_wav(prompt_wav.file, 16000)
-    if not name:
-        name = _gen_spk_id('voice')
-    ok = cv.add_zero_shot_spk(prompt_text, prompt_speech_16k, name)
-    if ok is not True:
-        return JSONResponse(status_code=500, content={'message': 'failed to add zero shot spk'})
-    cv.save_spkinfo()
-
-    # 2) 朗读预览文本
-    frames: List[torch.Tensor] = []
-    if isinstance(cv, CosyVoice2):
-        # CosyVoice2: 使用 instruct2
-        for out in cv.inference_instruct2(preview_text, instruct_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
-            frames.append(out['tts_speech'])
-    else:
-        # CosyVoice: 使用 zero_shot（不支持 instruct_text）
-        for out in cv.inference_zero_shot(preview_text, prompt_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
-            frames.append(out['tts_speech'])
     
-    merged = _merge_torch_audio_frames(frames)
-    pcm = _float_to_pcm16le_bytes(merged)
-    wav_bytes = _pcm16le_to_wav_bytes(pcm, cv.sample_rate)
-    total_seconds = (merged.shape[1] / cv.sample_rate) if merged.shape[1] > 0 else 0.0
-    subs = _build_subtitles_by_ratio(preview_text, total_seconds)
-    subs_srt = _format_srt(subs)
-    subs_vtt = _format_vtt(subs)
+    # 判断使用哪种模式
+    has_prompt_wav = prompt_wav is not None and prompt_wav.filename
+    has_prompt_text = prompt_text and prompt_text.strip()
+    has_instruct_text = instruct_text and instruct_text.strip()
+    
+    # 模式1：零样本克隆
+    if has_prompt_wav or has_prompt_text:
+        # 验证必需参数
+        if not has_prompt_wav:
+            return JSONResponse(status_code=400, content={
+                'message': 'prompt_wav is required when using zero-shot cloning mode.'
+            })
+        if not has_prompt_text:
+            return JSONResponse(status_code=400, content={
+                'message': 'prompt_text is required when using zero-shot cloning mode. Please provide the text content of the prompt audio.'
+            })
+        
+        # 1) 注册/覆盖该名称的说话人（使用零样本提示音）
+        prompt_speech_16k = load_wav(prompt_wav.file, 16000)
+        if not name:
+            name = _gen_spk_id('voice')
+        ok = cv.add_zero_shot_spk(prompt_text, prompt_speech_16k, name)
+        if ok is not True:
+            return JSONResponse(status_code=500, content={'message': 'failed to add zero shot spk'})
+        cv.save_spkinfo()
+        
+        # 2) 朗读预览文本
+        frames: List[torch.Tensor] = []
+        if isinstance(cv, CosyVoice2):
+            # CosyVoice2: 使用 instruct2
+            for out in cv.inference_instruct2(preview_text, instruct_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
+                frames.append(out['tts_speech'])
+        else:
+            # CosyVoice: 使用 zero_shot（不支持 instruct_text）
+            for out in cv.inference_zero_shot(preview_text, prompt_text, prompt_speech_16k, zero_shot_spk_id='', stream=False):
+                frames.append(out['tts_speech'])
+        
+        merged = _merge_torch_audio_frames(frames)
+        pcm = _float_to_pcm16le_bytes(merged)
+        wav_bytes = _pcm16le_to_wav_bytes(pcm, cv.sample_rate)
+        total_seconds = (merged.shape[1] / cv.sample_rate) if merged.shape[1] > 0 else 0.0
+        subs = _build_subtitles_by_ratio(preview_text, total_seconds)
+        subs_srt = _format_srt(subs)
+        subs_vtt = _format_vtt(subs)
+        
+        return {
+            'mode': 'zero_shot',
+            'spk_id': name,
+            'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
+            'sample_rate': cv.sample_rate,
+            'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice',
+            'subtitles': subs,
+            'subtitles_srt': subs_srt,
+            'subtitles_vtt': subs_vtt
+        }
+    
+    # 模式2：声音描述生成（仅 CosyVoice2）
+    elif has_instruct_text:
+        if not isinstance(cv, CosyVoice2):
+            return JSONResponse(status_code=400, content={
+                'message': 'Instruct mode requires CosyVoice2 model. Current model does not support inference_instruct.'
+            })
+        
+        # 用 instruct 生成音频
+        frames: List[torch.Tensor] = []
+        try:
+            for out in cv.inference_instruct(preview_text, spk_id, instruct_text, stream=False):
+                frames.append(out['tts_speech'])
+        except Exception as e:
+            logger.error(f'inference_instruct failed: {e}')
+            return JSONResponse(status_code=500, content={
+                'message': f'Failed to generate audio: {str(e)}'
+            })
+        
+        merged = _merge_torch_audio_frames(frames)
+        
+        # 如果提供了 name，将生成的音频注册为新的说话人
+        registered_spk_id = None
+        if not name:
+            name = _gen_spk_id('voice')
+        # 将生成的音频重采样到 16kHz 并注册
+        if cv.sample_rate != 16000:
+            import torchaudio
+            resampler = torchaudio.transforms.Resample(cv.sample_rate, 16000)
+            prompt_speech_16k = resampler(merged)
+        else:
+            prompt_speech_16k = merged
 
-    return {
-        'spk_id': name,
-        'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
-        'sample_rate': cv.sample_rate,
-        'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice',
-        'subtitles': subs,
-        'subtitles_srt': subs_srt,
-        'subtitles_vtt': subs_vtt
-    }
+        # 使用预览文本作为提示文本注册说话人
+        ok = cv.add_zero_shot_spk(preview_text, prompt_speech_16k, name)
+        if ok is True:
+            cv.save_spkinfo()
+            registered_spk_id = name
+            logger.info(f'Registered instruct-generated voice as spk_id: {name}')
+        else:
+            logger.warning(f'Failed to register instruct-generated voice as spk_id: {name}')
+        
+        pcm = _float_to_pcm16le_bytes(merged)
+        wav_bytes = _pcm16le_to_wav_bytes(pcm, cv.sample_rate)
+        total_seconds = (merged.shape[1] / cv.sample_rate) if merged.shape[1] > 0 else 0.0
+        subs = _build_subtitles_by_ratio(preview_text, total_seconds)
+        subs_srt = _format_srt(subs)
+        subs_vtt = _format_vtt(subs)
+        
+        result = {
+            'mode': 'instruct',
+            'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
+            'sample_rate': cv.sample_rate,
+            'model_type': 'CosyVoice2',
+            'instruct_text': instruct_text,
+            'subtitles': subs,
+            'spk_id': name,
+            'subtitles_srt': subs_srt,
+            'subtitles_vtt': subs_vtt,
+            'message': f'Voice registered as {registered_spk_id}, can be reused with /voice/tts_by_name'
+        }
+        return result
+    
+    # 两种模式都没有提供必需参数
+    else:
+        return JSONResponse(status_code=400, content={
+            'message': 'Please provide either (prompt_wav + prompt_text) for zero-shot cloning, or (instruct_text) for voice description mode.'
+        })
 
 
 # 2) 使用名称朗读任意文本（复用 1 中注册的音色）
@@ -386,6 +477,66 @@ async def voice_tts_by_name_structured(name: str = Form(),
         'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
         'sample_rate': sr,
         'model_type': 'CosyVoice2' if isinstance(cv, CosyVoice2) else 'CosyVoice',
+        'subtitles': subs,
+        'subtitles_srt': subs_srt,
+        'subtitles_vtt': subs_vtt
+    }
+
+
+# 4) 根据声音提示词生成音频-不注册spk_id（无需提示音频）
+@app.post('/voice/tts_by_instruct')
+async def voice_tts_by_instruct(instruct_text: str = Form(),
+                                tts_text: str = Form()):
+    """
+    根据声音提示词（如"用温柔的女声"、"用低沉的男声"、"用四川口音"等）生成音频。
+    仅支持 CosyVoice2 模型的 inference_instruct 方法。
+    不需要上传提示音频，模型会根据描述自动生成对应音色。
+    
+    参数：
+    - instruct_text: 声音提示词，描述想要的音色特征
+    - tts_text: 要朗读的文本内容
+    - spk_id: 可选，指定预训练说话人ID（如果为空则使用默认）
+    """
+    cv = get_cosyvoice()
+    
+    # 检查是否为 CosyVoice2 模型
+    if not isinstance(cv, CosyVoice2):
+        return JSONResponse(status_code=400, content={
+            'message': 'This feature requires CosyVoice2 model. Current model does not support inference_instruct.'
+        })
+    
+    if not instruct_text or not instruct_text.strip():
+        return JSONResponse(status_code=400, content={
+            'message': 'instruct_text is required. Please provide voice description like "用温柔的女声" or "用低沉的男声".'
+        })
+    
+    if not tts_text or not tts_text.strip():
+        return JSONResponse(status_code=400, content={
+            'message': 'tts_text is required. Please provide the text to be spoken.'
+        })
+    
+    frames: List[torch.Tensor] = []
+    try:
+        for out in cv.inference_instruct(tts_text, spk_id, instruct_text, stream=False):
+            frames.append(out['tts_speech'])
+    except Exception as e:
+        logger.error(f'inference_instruct failed: {e}')
+        return JSONResponse(status_code=500, content={
+            'message': f'Failed to generate audio: {str(e)}'
+        })
+    
+    merged = _merge_torch_audio_frames(frames)
+    pcm = _float_to_pcm16le_bytes(merged)
+    wav_bytes = _pcm16le_to_wav_bytes(pcm, cv.sample_rate)
+    total_seconds = (merged.shape[1] / cv.sample_rate) if merged.shape[1] > 0 else 0.0
+    subs = _build_subtitles_by_ratio(tts_text, total_seconds)
+    subs_srt = _format_srt(subs)
+    subs_vtt = _format_vtt(subs)
+    
+    return {
+        'audio_wav_base64': base64.b64encode(wav_bytes).decode('ascii'),
+        'sample_rate': cv.sample_rate,
+        'instruct_text': instruct_text,
         'subtitles': subs,
         'subtitles_srt': subs_srt,
         'subtitles_vtt': subs_vtt
