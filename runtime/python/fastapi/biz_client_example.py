@@ -65,7 +65,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', type=str, default='voice_demo')
     parser.add_argument('--prompt_wav', type=str, default='../../../asset/zero_shot_prompt.wav')
     parser.add_argument('--preview_text', type=str, default='你好，这是音色预览。')
-    parser.add_argument('--prompt_text', type=str, default='')
+    parser.add_argument('--prompt_text', type=str, default='希望你以后能够做的比我还好呦。')
     parser.add_argument('--instruct_text', type=str, default='')
     parser.add_argument('--tts_text', type=str, default='现在开始正式的文本合成演示。')
     parser.add_argument('--instruct_text_tts', type=str, default='')
