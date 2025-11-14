@@ -18,8 +18,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # 路径注入，便于导入 CosyVoice SDK 与工具
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append('{}/../../..'.format(ROOT_DIR))
-sys.path.append('{}/../../../third_party/Matcha-TTS'.format(ROOT_DIR))
+sys.path.insert(0, '{}/../../..'.format(ROOT_DIR))
+sys.path.insert(0, '{}/../../../third_party/Matcha-TTS'.format(ROOT_DIR))
 
 from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2
 from cosyvoice.utils.file_utils import load_wav
